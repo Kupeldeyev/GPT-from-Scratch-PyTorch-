@@ -5,8 +5,8 @@ import torch.nn.functional as F
 # Hyperparameters
 batch_size = 32
 block_size = 8
-max_iters = 3000
-eval_interval = 300
+max_iters = 5000
+eval_interval = 500
 learning_rate = 1e-3
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 eval_iters = 200
@@ -54,12 +54,34 @@ def estimate_loss():
   model.train()
   return out
 
+class Head(nn.Module):
+  def __init__(self, head_size):
+    super().__init__()
+    self.key = nn.Linear(n_embd, head_size, bias=False)
+    self.query = nn.Linear(n_embd, head_size, bias=False)
+    self.value = nn.Linear(n_embd, head_size, bias=False)
+    self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+
+  def forward(self, x):
+    B, T, C = x.shape
+    k = self.key(x)
+    q = self.query(x)
+
+    # calculating attention scores ('affinities')
+    wei = q @ k.transpose(-2, -1) * C**-0.5# (B, T, T)
+    wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
+    wei = F.softmax(wei, dim=-1)
+    v = self.value(x)
+    out = wei @ v
+    return out
+
 # Super Simple Bigram Model
 class BigramLanguageModel(nn.Module):
   def __init__(self):
     super().__init__()
     self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
     self.position_embedding_table = nn.Embedding(block_size, n_embd)
+    self.sa_head = Head(n_embd)
     self.lm_head = nn.Linear(n_embd, vocab_size)
 
   def forward(self, idx, targets=None):
@@ -67,8 +89,8 @@ class BigramLanguageModel(nn.Module):
     tok_emb = self.token_embedding_table(idx) # (B, T, n_embd)
     pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T, n_embd)
     x = tok_emb + pos_emb # (B, T, n_embd) + (T, n_embd) = (B, T, n_embd)
+    x = self.sa_head(x) # apply one head of self-attention (B, T, C)
     logits = self.lm_head(x) 
-
 
     if targets is None:
       loss = None
@@ -114,4 +136,4 @@ for iter in range(max_iters):
 
 
 context = torch.zeros((1, 1), dtype=torch.long, device=device)
-print(decode(m.generate(context, max_new_tokens=100)[0].tolist()))
+print(decode(m.generate(context, max_new_tokens=500)[0].tolist()))
