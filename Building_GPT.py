@@ -75,13 +75,35 @@ class Head(nn.Module):
     out = wei @ v
     return out
 
+class MultiHeadAttention(nn.Module):
+  def __init__(self, head_num, head_size):
+    super().__init__()
+    self.heads = nn.ModuleList([Head(head_size) for _ in range(head_num)])
+    
+  def forward(self, x):
+    return torch.cat([h(x) for h in self.heads], dim=-1)
+  
+class FeedForward(nn.Module):
+  def __init__(self, n_embd):
+    super().__init__()
+    self.net = nn.Sequential(
+      nn.Linear(n_embd, n_embd),
+      nn.ReLU()
+    )
+  
+  def forward(self, x):
+    return self.net(x)
+
+
+
 # Super Simple Bigram Model
 class BigramLanguageModel(nn.Module):
   def __init__(self):
     super().__init__()
     self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
     self.position_embedding_table = nn.Embedding(block_size, n_embd)
-    self.sa_head = Head(n_embd)
+    self.sa_heads = MultiHeadAttention(4, n_embd // 4)
+    self.ffwd = FeedForward(n_embd)
     self.lm_head = nn.Linear(n_embd, vocab_size)
 
   def forward(self, idx, targets=None):
@@ -89,7 +111,8 @@ class BigramLanguageModel(nn.Module):
     tok_emb = self.token_embedding_table(idx) # (B, T, n_embd)
     pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T, n_embd)
     x = tok_emb + pos_emb # (B, T, n_embd) + (T, n_embd) = (B, T, n_embd)
-    x = self.sa_head(x) # apply one head of self-attention (B, T, C)
+    x = self.sa_heads(x) # apply one head of self-attention (B, T, C)
+    x = self.ffwd(x)
     logits = self.lm_head(x) 
 
     if targets is None:
@@ -112,6 +135,7 @@ class BigramLanguageModel(nn.Module):
       idx_next = torch.multinomial(probs, num_samples=1) # (Batch_size, 1)
       idx = torch.cat((idx, idx_next), dim=1)
     return idx
+
 
 # Creating model
 model = BigramLanguageModel()
